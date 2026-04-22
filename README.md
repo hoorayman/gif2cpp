@@ -18,13 +18,13 @@ Inspired by the [online GIF2CPP tool](https://huykhong.com/IOT/gif2cpp/), but ru
 ## Install
 
 ```bash
-go install github.com/huykhoong/gif2cpp@latest
+go install github.com/hoorayman/gif2cpp@latest
 ```
 
 Or build from source:
 
 ```bash
-git clone https://github.com/huykhoong/gif2cpp.git
+git clone https://github.com/hoorayman/gif2cpp.git
 cd gif2cpp
 go build -o gif2cpp .
 ```
