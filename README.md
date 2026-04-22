@@ -1,8 +1,10 @@
 # GIF2CPP
 
-A command-line tool written in Go that converts GIF animations into C/C++ byte arrays for display on monochrome OLED/LCD screens (ESP32, Arduino, etc.).
+A command-line tool written in Go that converts GIF animations into C/C++ byte arrays for display on monochrome OLED/LCD screens (ESP32, Arduino, STM32, etc.).
 
 Inspired by the [online GIF2CPP tool](https://huykhong.com/IOT/gif2cpp/), but runs entirely locally — no browser needed.
+
+> **gif2cpp** | gif to c++ | gif to cpp | gif to arduino | gif to esp32 | gif animation to oled | gif to ssd1306 | gif to byte array | animated gif c++ | image2cpp alternative | oled animation converter | monochrome display gif
 
 ## Features
 
