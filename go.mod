@@ -1,4 +1,4 @@
-module gif2cpp
+module github.com/huykhoong/gif2cpp
 
 go 1.25.0
 
