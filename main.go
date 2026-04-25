@@ -10,18 +10,19 @@ import (
 )
 
 var (
-	canvasW        int
-	canvasH        int
-	threshold      int
-	drawMode       string
-	scaleMode      string
-	outputFormat   string
-	varName        string
-	outputFile     string
-	invertColors   bool
-	flipH          bool
-	flipV          bool
-	rotate         int
+	canvasW      int
+	canvasH      int
+	threshold    int
+	drawMode     string
+	scaleMode    string
+	outputFormat string
+	varName      string
+	outputFile   string
+	invertColors bool
+	flipH        bool
+	flipV        bool
+	rotate       int
+	dither       bool
 )
 
 func main() {
@@ -45,6 +46,7 @@ func main() {
 	rootCmd.Flags().BoolVar(&flipH, "flip-h", false, "Flip horizontally")
 	rootCmd.Flags().BoolVar(&flipV, "flip-v", false, "Flip vertically")
 	rootCmd.Flags().IntVar(&rotate, "rotate", 0, "Rotation: 0, 90, 180, 270")
+	rootCmd.Flags().BoolVarP(&dither, "dither", "d", true, "Enable Floyd-Steinberg dithering for better image quality")
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -84,7 +86,7 @@ func runConvert(cmd *cobra.Command, args []string) {
 	}
 
 	// Decode GIF
-	gif, err := DecodeGIF(gifPath)
+	g, err := DecodeGIF(gifPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error decoding GIF: %v\n", err)
 		os.Exit(1)
@@ -101,9 +103,10 @@ func runConvert(cmd *cobra.Command, args []string) {
 		FlipH:        flipH,
 		FlipV:        flipV,
 		Rotate:       rotate,
+		Dither:       dither,
 	}
 
-	frames, delays, err := ConvertFrames(gif, opts)
+	frames, delays, err := ConvertFrames(g, opts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error converting frames: %v\n", err)
 		os.Exit(1)
@@ -125,7 +128,6 @@ func runConvert(cmd *cobra.Command, args []string) {
 }
 
 func sanitizeVarName(s string) string {
-	// Replace non-alphanumeric chars with underscore
 	var result strings.Builder
 	for i, r := range s {
 		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
@@ -137,7 +139,6 @@ func sanitizeVarName(s string) string {
 		}
 	}
 	name := result.String()
-	// Ensure starts with letter or underscore
 	if len(name) > 0 && name[0] >= '0' && name[0] <= '9' {
 		name = "_" + name
 	}

@@ -11,12 +11,14 @@ import (
 	xdraw "golang.org/x/image/draw"
 )
 
+// DecodeGIF reads and decodes a GIF file
 func DecodeGIF(path string) (*gif.GIF, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open file: %w", err)
 	}
 	defer f.Close()
+
 	g, err := gif.DecodeAll(f)
 	if err != nil {
 		return nil, fmt.Errorf("decode gif: %w", err)
@@ -24,18 +26,21 @@ func DecodeGIF(path string) (*gif.GIF, error) {
 	return g, nil
 }
 
+// ConvertOptions holds all conversion parameters
 type ConvertOptions struct {
 	CanvasWidth  int
 	CanvasHeight int
 	Threshold    uint8
-	DrawMode     string
-	ScaleMode    string
+	DrawMode     string // horizontal, vertical, horizontal-bytes
+	ScaleMode    string // fit, fit-width, fit-height, stretch, custom
 	Invert       bool
 	FlipH        bool
 	FlipV        bool
-	Rotate       int
+	Rotate       int  // 0, 90, 180, 270
+	Dither       bool // Enable Floyd-Steinberg dithering
 }
 
+// ConvertFrames processes all GIF frames into monochrome byte arrays
 func ConvertFrames(g *gif.GIF, opts ConvertOptions) ([][]byte, []int, error) {
 	frames := make([][]byte, 0, len(g.Image))
 	delays := make([]int, 0, len(g.Image))
@@ -49,52 +54,49 @@ func ConvertFrames(g *gif.GIF, opts ConvertOptions) ([][]byte, []int, error) {
 		canvasW, canvasH = canvasH, canvasW
 	}
 
-	// 使用完整 GIF 逻辑尺寸作为合成画布
+	// Use full GIF logical size as composite canvas
 	gifBounds := image.Rect(0, 0, g.Config.Width, g.Config.Height)
+	if gifBounds.Dx() == 0 || gifBounds.Dy() == 0 {
+		gifBounds = bounds
+	}
 	composite := image.NewRGBA(gifBounds)
 
 	for i, srcPaletted := range g.Image {
 		frameBounds := srcPaletted.Bounds()
 
-		// 获取上一帧的 disposal 方式
-		disposal := byte(0)
+		// Handle disposal from previous frame
 		if i > 0 && int(i-1) < len(g.Disposal) {
-			disposal = g.Disposal[i-1]
-		}
-
-		// 根据 disposal 处理画布
-		switch disposal {
-		case gif.DisposalBackground:
-			// 清除上一帧区域为透明
-			if i > 0 {
+			switch g.Disposal[i-1] {
+			case gif.DisposalBackground:
 				prev := g.Image[i-1].Bounds()
 				for y := prev.Min.Y; y < prev.Max.Y; y++ {
 					for x := prev.Min.X; x < prev.Max.X; x++ {
 						composite.SetRGBA(x, y, color.RGBA{})
 					}
 				}
+			case gif.DisposalPrevious:
+				// keep composite as-is
 			}
-		case gif.DisposalPrevious:
-			// 不修改 composite，保持上上帧状态（简化处理：保持不变）
-		default:
-			// gif.DisposalNone 或 0：保留当前画布
 		}
 
-		// 将当前帧绘制到 composite（注意用 frameBounds 作为目标区域）
+		// Draw current frame onto composite
 		src := image.NewRGBA(frameBounds)
 		xdraw.Draw(src, frameBounds, srcPaletted, frameBounds.Min, xdraw.Src)
 		xdraw.Draw(composite, frameBounds, src, image.Point{}, xdraw.Over)
 
-		// 缩放合成帧到目标尺寸
+		// Scale composite to target size
 		scaled := scaleImage(composite, scaledW, scaledH)
 
-		// 放置到 canvas 居中
+		// Place on canvas centered
 		canvas := image.NewRGBA(image.Rect(0, 0, canvasW, canvasH))
 		ox := (canvasW - scaledW) / 2
 		oy := (canvasH - scaledH) / 2
 		xdraw.Draw(canvas, image.Rect(ox, oy, ox+scaledW, oy+scaledH), scaled, image.Point{}, xdraw.Over)
 
+		// Apply flip/rotate
 		result := transformImage(canvas, opts)
+
+		// Convert to monochrome bytes
 		frameBytes := imageToBytes(result, opts)
 		frames = append(frames, frameBytes)
 
@@ -108,6 +110,7 @@ func ConvertFrames(g *gif.GIF, opts ConvertOptions) ([][]byte, []int, error) {
 	return frames, delays, nil
 }
 
+// calcScale returns the scaled dimensions based on scale mode
 func calcScale(gifW, gifH int, opts ConvertOptions) (int, int) {
 	canvasW, canvasH := opts.CanvasWidth, opts.CanvasHeight
 	switch opts.ScaleMode {
@@ -122,19 +125,26 @@ func calcScale(gifW, gifH int, opts ConvertOptions) (int, int) {
 	case "fit-height":
 		scale := float64(canvasH) / float64(gifH)
 		return max(1, int(math.Round(float64(gifW)*scale))), canvasH
+	case "stretch":
+		return canvasW, canvasH
+	case "custom":
+		return canvasW, canvasH
 	default:
 		return canvasW, canvasH
 	}
 }
 
+// scaleImage scales an image using high-quality CatmullRom interpolation
 func scaleImage(src *image.RGBA, w, h int) *image.RGBA {
 	dst := image.NewRGBA(image.Rect(0, 0, w, h))
-	xdraw.ApproxBiLinear.Scale(dst, dst.Bounds(), src, src.Bounds(), xdraw.Over, nil)
+	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, src.Bounds(), xdraw.Over, nil)
 	return dst
 }
 
+// transformImage applies flip and rotation
 func transformImage(src *image.RGBA, opts ConvertOptions) *image.RGBA {
 	img := src
+
 	if opts.FlipH || opts.FlipV {
 		b := img.Bounds()
 		dst := image.NewRGBA(b)
@@ -152,12 +162,15 @@ func transformImage(src *image.RGBA, opts ConvertOptions) *image.RGBA {
 		}
 		img = dst
 	}
+
 	if opts.Rotate != 0 {
 		img = rotateImage(img, opts.Rotate)
 	}
+
 	return img
 }
 
+// rotateImage rotates image by the given degrees (90, 180, 270)
 func rotateImage(src *image.RGBA, degrees int) *image.RGBA {
 	b := src.Bounds()
 	w, h := b.Dx(), b.Dy()
@@ -190,35 +203,99 @@ func rotateImage(src *image.RGBA, degrees int) *image.RGBA {
 	return dst
 }
 
+// imageToBytes converts an RGBA image to a monochrome byte array.
+// When Dither is enabled, Floyd-Steinberg error diffusion is applied
+// to simulate grayscale on a 1-bit display.
 func imageToBytes(img *image.RGBA, opts ConvertOptions) []byte {
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
+
+	// Build grayscale float buffer (0-255), respecting alpha
+	gray := make([]float64, w*h)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			c := img.RGBAAt(x, y)
+			if c.A < 128 {
+				gray[y*w+x] = 0
+			} else {
+				gray[y*w+x] = float64(luminance(c.R, c.G, c.B))
+			}
+		}
+	}
+
+	// Floyd-Steinberg dithering
+	if opts.Dither {
+		thr := float64(opts.Threshold)
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				old := gray[y*w+x]
+				var newVal float64
+				if old > thr {
+					newVal = 255
+				} else {
+					newVal = 0
+				}
+				gray[y*w+x] = newVal
+				errVal := old - newVal
+
+				if x+1 < w {
+					gray[y*w+x+1] += errVal * 7 / 16
+				}
+				if x-1 >= 0 && y+1 < h {
+					gray[(y+1)*w+x-1] += errVal * 3 / 16
+				}
+				if y+1 < h {
+					gray[(y+1)*w+x] += errVal * 5 / 16
+				}
+				if x+1 < w && y+1 < h {
+					gray[(y+1)*w+x+1] += errVal * 1 / 16
+				}
+			}
+		}
+	}
+
+	// Helper: decide if pixel at (x, y) should be ON
+	isOn := func(x, y int) bool {
+		var on bool
+		if opts.Dither {
+			on = gray[y*w+x] > 128
+		} else {
+			c := img.RGBAAt(x, y)
+			if c.A < 128 {
+				on = false
+			} else {
+				on = float64(luminance(c.R, c.G, c.B)) > float64(opts.Threshold)
+			}
+		}
+		if opts.Invert {
+			on = !on
+		}
+		return on
+	}
+
 	var result []byte
 
 	switch opts.DrawMode {
 	case "horizontal", "horizontal-bytes":
+		// Row-major, MSB = leftmost pixel
 		bytesPerRow := (w + 7) / 8
 		result = make([]byte, bytesPerRow*h)
 		for y := 0; y < h; y++ {
 			for x := 0; x < w; x++ {
-				if isPixelOn(img, x, y, opts) {
-					byteIndex := y*bytesPerRow + x/8
-					bitIndex := uint(7 - x%8)
-					result[byteIndex] |= 1 << bitIndex
+				if isOn(x, y) {
+					result[y*bytesPerRow+x/8] |= 1 << uint(7-x%8)
 				}
 			}
 		}
 
 	case "vertical":
+		// SSD1306 page mode: row-major pages, bit0 = topmost pixel in page
 		pages := (h + 7) / 8
 		result = make([]byte, pages*w)
 		for y := 0; y < h; y++ {
 			for x := 0; x < w; x++ {
-				if isPixelOn(img, x, y, opts) {
-					page := y / 8
-					bitInPage := uint(y % 8)
-					byteIndex := page*w + x // ✅ 行优先
-					result[byteIndex] |= 1 << bitInPage
+				if isOn(x, y) {
+					result[(y/8)*w+x] |= 1 << uint(y%8)
 				}
 			}
 		}
@@ -227,20 +304,7 @@ func imageToBytes(img *image.RGBA, opts ConvertOptions) []byte {
 	return result
 }
 
-func isPixelOn(img *image.RGBA, x, y int, opts ConvertOptions) bool {
-	c := img.RGBAAt(x, y)
-	if c.A < 128 {
-		// 透明像素：不亮（除非 invert）
-		return opts.Invert
-	}
-	lum := luminance(c.R, c.G, c.B)
-	isWhite := lum > opts.Threshold
-	if opts.Invert {
-		isWhite = !isWhite
-	}
-	return isWhite
-}
-
+// luminance calculates perceptual grayscale value from RGB
 func luminance(r, g, b uint8) uint8 {
 	return uint8(float64(r)*0.299 + float64(g)*0.587 + float64(b)*0.114)
 }
