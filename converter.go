@@ -224,16 +224,15 @@ func imageToBytes(img *image.RGBA, opts ConvertOptions) []byte {
 	}
 
 	// Floyd-Steinberg dithering
-	// darkCutoff: pixels below this are treated as pure black and do NOT
-	// participate in error diffusion — this prevents background noise.
-	// brightCutoff: pixels above this are pure white, also no diffusion needed.
-	const darkCutoff = 30.0
-	const brightCutoff = 230.0
+	// darkCutoff: pixels below this snap to black without error diffusion.
+	// Raised to 60 to aggressively suppress background noise.
+	// brightCutoff: pixels above this snap to white without diffusion.
+	const darkCutoff = 60.0
+	const brightCutoff = 220.0
 
 	if opts.Dither {
 		for y := 0; y < h; y++ {
 			for x := 0; x < w; x++ {
-				// Clamp accumulated error into valid range
 				old := gray[y*w+x]
 				if old > 255 {
 					old = 255
@@ -245,16 +244,12 @@ func imageToBytes(img *image.RGBA, opts ConvertOptions) []byte {
 				var errVal float64
 
 				if old < darkCutoff {
-					// Definitely dark — snap to black, no error diffusion
-					// so adjacent pixels don't get polluted
 					gray[y*w+x] = 0
 					continue
 				} else if old > brightCutoff {
-					// Definitely bright — snap to white, no diffusion needed
 					gray[y*w+x] = 255
 					continue
 				} else {
-					// Mid-range: apply Floyd-Steinberg
 					if old > 127 {
 						newVal = 255
 					} else {
@@ -278,13 +273,38 @@ func imageToBytes(img *image.RGBA, opts ConvertOptions) []byte {
 				}
 			}
 		}
+
+		// Post-processing: remove isolated white pixels (noise dots).
+		// Any white pixel with fewer than 2 white 8-neighbours is killed.
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				if gray[y*w+x] < 128 {
+					continue
+				}
+				neighbours := 0
+				for dy := -1; dy <= 1; dy++ {
+					for dx := -1; dx <= 1; dx++ {
+						if dx == 0 && dy == 0 {
+							continue
+						}
+						nx, ny := x+dx, y+dy
+						if nx >= 0 && nx < w && ny >= 0 && ny < h && gray[ny*w+nx] > 127 {
+							neighbours++
+						}
+					}
+				}
+				if neighbours < 2 {
+					gray[y*w+x] = 0
+				}
+			}
+		}
 	}
 
 	// Helper: decide if pixel at (x, y) should be ON
 	isOn := func(x, y int) bool {
 		var on bool
 		if opts.Dither {
-			on = gray[y*w+x] > 127 // consistent with dither midpoint above
+			on = gray[y*w+x] > 127
 		} else {
 			c := img.RGBAAt(x, y)
 			if c.A < 128 {
