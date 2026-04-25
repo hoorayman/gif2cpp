@@ -225,12 +225,19 @@ func imageToBytes(img *image.RGBA, opts ConvertOptions) []byte {
 
 	// Floyd-Steinberg dithering
 	if opts.Dither {
-		thr := float64(opts.Threshold)
 		for y := 0; y < h; y++ {
 			for x := 0; x < w; x++ {
+				// Clamp accumulated error before thresholding
 				old := gray[y*w+x]
+				if old > 255 {
+					old = 255
+				} else if old < 0 {
+					old = 0
+				}
+				gray[y*w+x] = old
+
 				var newVal float64
-				if old > thr {
+				if old > 127 { // fixed midpoint for dithering
 					newVal = 255
 				} else {
 					newVal = 0
@@ -258,7 +265,7 @@ func imageToBytes(img *image.RGBA, opts ConvertOptions) []byte {
 	isOn := func(x, y int) bool {
 		var on bool
 		if opts.Dither {
-			on = gray[y*w+x] > 128
+			on = gray[y*w+x] > 127 // consistent with dither midpoint above
 		} else {
 			c := img.RGBAAt(x, y)
 			if c.A < 128 {
