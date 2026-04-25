@@ -224,26 +224,45 @@ func imageToBytes(img *image.RGBA, opts ConvertOptions) []byte {
 	}
 
 	// Floyd-Steinberg dithering
+	// darkCutoff: pixels below this are treated as pure black and do NOT
+	// participate in error diffusion — this prevents background noise.
+	// brightCutoff: pixels above this are pure white, also no diffusion needed.
+	const darkCutoff = 30.0
+	const brightCutoff = 230.0
+
 	if opts.Dither {
 		for y := 0; y < h; y++ {
 			for x := 0; x < w; x++ {
-				// Clamp accumulated error before thresholding
+				// Clamp accumulated error into valid range
 				old := gray[y*w+x]
 				if old > 255 {
 					old = 255
 				} else if old < 0 {
 					old = 0
 				}
-				gray[y*w+x] = old
 
 				var newVal float64
-				if old > 127 { // fixed midpoint for dithering
-					newVal = 255
+				var errVal float64
+
+				if old < darkCutoff {
+					// Definitely dark — snap to black, no error diffusion
+					// so adjacent pixels don't get polluted
+					gray[y*w+x] = 0
+					continue
+				} else if old > brightCutoff {
+					// Definitely bright — snap to white, no diffusion needed
+					gray[y*w+x] = 255
+					continue
 				} else {
-					newVal = 0
+					// Mid-range: apply Floyd-Steinberg
+					if old > 127 {
+						newVal = 255
+					} else {
+						newVal = 0
+					}
+					gray[y*w+x] = newVal
+					errVal = old - newVal
 				}
-				gray[y*w+x] = newVal
-				errVal := old - newVal
 
 				if x+1 < w {
 					gray[y*w+x+1] += errVal * 7 / 16
